@@ -25,7 +25,7 @@ param (
 $ErrorActionPreference = "Stop"
 $DeploymentShareDrive = $DeploymentShareDrive.TrimEnd("\")
 
-Write-Output "Downloading MDT 8456"
+write "Downloading MDT 8456"
 $params = @{
     Source      = "https://download.microsoft.com/download"+
     "/3/3/9/339BE62D-B4B8-4956-B58D-73C4685FC492/MicrosoftDeploymentToolkit_x64.msi"
@@ -34,7 +34,7 @@ $params = @{
 }
 Start-BitsTransfer @params
 
-Write-Output "Downloading ADK 1809"
+write "Downloading ADK 1809"
 $params = @{
     Source      = "http://download.microsoft.com/download"+
     "/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe"
@@ -43,7 +43,7 @@ $params = @{
 }
 Start-BitsTransfer @params
 
-Write-Output "Downloading ADK 1809 WinPE Addon"
+write "Downloading ADK 1809 WinPE Addon"
 $params = @{
     Source      = "http://download.microsoft.com/download"+
     "/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe"
@@ -52,36 +52,36 @@ $params = @{
 }
 Start-BitsTransfer @params
 
-Write-Output "Installing MDT 8456"
+write "Installing MDT 8456"
 $params = @{
     Wait         = $True
     FilePath     = "msiexec"
     ArgumentList = "/i ""$PSScriptRoot\MicrosoftDeploymentToolkit_x64.msi"" /qn"
 }
-Start-Process @params
+start @params
 
-Write-Output "Installing ADK 1809"
+write "Installing ADK 1809"
 $params = @{
     Wait         = $True
     FilePath     = "$PSScriptRoot\adksetup.exe"
     ArgumentList = "/quiet /features OptionId.DeploymentTools"
 }
-Start-Process @params
+start @params
 
-Write-Output "Installing ADK 1809 WinPE Addon"
+write "Installing ADK 1809 WinPE Addon"
 $params = @{
     Wait         = $True
     FilePath     = "$PSScriptRoot\adkwinpesetup.exe"
     ArgumentList = "/quiet /features OptionId.WindowsPreinstallationEnvironment"
 }
-Start-Process @params
+start @params
 
-Write-Output "Importing MDT Module"
+write "Importing MDT Module"
 $ModulePath = "$env:ProgramFiles\Microsoft Deployment Toolkit"+
               "\bin\MicrosoftDeploymentToolkit.psd1"
 Import-Module $ModulePath
 
-Write-Output "Creating local Service Account for DeploymentShare"
+write "Creating local Service Account for DeploymentShare"
 $params = @{
     Name                 = "svc_mdt"      
     Password             = (ConvertTo-SecureString $SvcAccountPassword -AsPlainText -Force)
@@ -90,7 +90,7 @@ $params = @{
 }
 New-LocalUser @params
 
-Write-Output "Creating Deployment Share Directory"
+write "Creating Deployment Share Directory"
 New-Item -Path "$DeploymentShareDrive\DeploymentShare" -ItemType Directory
 
 $params = @{
@@ -109,16 +109,16 @@ $params = @{
 }
 New-PSDrive @params -Verbose | Add-MDTPersistentDrive -Verbose
 
-Write-Output "Checking for wim files to import"
+write "Checking for wim files to import"
 $Wims = Get-ChildItem $PSScriptRoot -Filter "*.wim" | Select -ExpandProperty FullName
 if (!$Wims) {
-    Write-Output "No wim files found"
+    write "No wim files found"
 }
 
 if ($Wims) {
     foreach($Wim in $Wims){
     $WimName = (Split-Path $Wim -Leaf).TrimEnd(".wim")
-    Write-Output "$WimName found - will import"
+    write "$WimName found - will import"
     $params = @{
         Path              = "DS001:\Operating Systems"
         SourceFile        = $Wim
@@ -129,7 +129,7 @@ if ($Wims) {
 }
 
 #Create Task Sequence for each Operating System
-Write-Output "Creating Task Sequence for each imported Operating System"
+write "Creating Task Sequence for each imported Operating System"
 $OperatingSystems = Get-ChildItem -Path "DS001:\Operating Systems"
 
 if ($OperatingSystems) {
@@ -155,7 +155,7 @@ if ($OperatingSystems) {
 }
 
 if (!$wimPath) {
-    Write-Output "Skipping as no WIM found"
+    write "Skipping as no WIM found"
 }
 
 #Edit Bootstrap.ini
@@ -177,19 +177,19 @@ $params = @{
 }
 Set-Content @params -Confirm:$False
 
-Write-Output "Disabling x86 Support"
+write "Disabling x86 Support"
 $DeploymentShareSettings = "$DeploymentShareDrive\DeploymentShare\Control\Settings.xml"
 $xmlDoc = [XML](Get-Content $DeploymentShareSettings)
 $xmldoc.Settings.SupportX86 = "False"
 $xmlDoc.Save($DeploymentShareSettings)
 
 #Create LiteTouch Boot WIM & ISO
-Write-Output "Creating LiteTouch Boot Media"
+write "Creating LiteTouch Boot Media"
 Update-MDTDeploymentShare -Path "DS001:" -Force -Verbose
 
 #Download & Import Office 365 2016
 if ($IncludeApplications) {
-    Write-Output "Downloading Office Deployment Toolkit"
+    write "Downloading Office Deployment Toolkit"
     New-Item -ItemType Directory -Path "$PSScriptRoot\odt"
     $params = @{
         Source      = "https://download.microsoft.com/download"+
@@ -198,14 +198,14 @@ if ($IncludeApplications) {
     }
     Start-BitsTransfer @params
 
-    Write-Output "Extracting Office Deployment Toolkit"
+    write "Extracting Office Deployment Toolkit"
     $params = @{
         FilePath     = "$PSScriptRoot\odt\officedeploymenttool.exe"
         ArgumentList = "/quiet /extract:$PSScriptRoot\odt"
     }
-    Start-Process @params -Wait
+    start @params -Wait
     Remove-Item "$PSScriptRoot\odt\officedeploymenttool.exe" -Force -Confirm:$false
-    Write-Output "Remove Visio"
+    write "Remove Visio"
     $xml = @"
 <Configuration>
   <Add OfficeClientEdition="64" Channel="Monthly">
@@ -218,7 +218,7 @@ if ($IncludeApplications) {
 "@
     Set-Content -Path "$PSScriptRoot\odt\configuration.xml" -Value $xml -Force -Confirm:$false
 
-    Write-Output "Importing Office 365 into MDT"
+    write "Importing Office 365 into MDT"
     $params = @{
         Path                  = "DS001:\Applications"
         Name                  = "Microsoft Office 365 2016 Monthly"
@@ -264,24 +264,24 @@ if ($IncludeApplications) {
 If ($InstallWDS) {
     $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
     if ($OSInfo.ProductType -eq 1) {
-        Write-Output "Workstation OS - WDS Not available"
+        write "Workstation OS - WDS Not available"
     }
     else {
-        Write-Output "Server OS - Checking if WDS available on this version"
+        write "Server OS - Checking if WDS available on this version"
         $WDSCheck = Get-WindowsFeature -Name WDS
         if ($WDSCheck) {
-            Write-Output "WDS Role Available - Installing"
+            write "WDS Role Available - Installing"
             Add-WindowsFeature -Name WDS -IncludeAllSubFeature -IncludeManagementTools
             $WDSUtilResults = wdsutil /initialize-server /remInst:"$DeploymentShareDrive\remInstall" /standalone
             $WDSConfigResults = wdsutil /Set-Server /AnswerClients:All
             Import-WdsBootImage -Path "$DeploymentShareDrive\DeploymentShare\Boot\LiteTouchPE_x64.wim" -NewImageName "MDT Litetouch" -SkipVerify
         }
         else {
-            Write-Output "WDS Role not available on this version of Server"
+            write "WDS Role not available on this version of Server"
         }
     }
 }
 
 #Finish
-Write-Output "Script Finished"
+write "Script Finished"
 Pause
