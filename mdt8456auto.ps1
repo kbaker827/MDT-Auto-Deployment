@@ -1,6 +1,6 @@
-﻿# Microsoft Deployment Toolkit 8450 Automatic Setup
+﻿# Microsoft Deployment Toolkit 8456 Automatic Setup
 # Author: Sam Tucker (https://github.com/pwshMgr)
-# Version: 3.3
+# Version: 3.3.1
 # Release date: 27/01/2019
 # Tested on Windows 10 1607, Windows Server 2016 & 2019
 
@@ -9,7 +9,7 @@
 #Input Parameters
 param (
     [Parameter(Mandatory = $true)]
-    [string] $ServiceAccountPassword,
+    [string] $SvcAccountPassword,
 
     [Parameter(Mandatory = $true)]
     [ValidateScript( {Test-Path $_})]
@@ -29,6 +29,7 @@ Write-Output "Downloading MDT 8456"
 $params = @{
     Source      = "https://download.microsoft.com/download"+
     "/3/3/9/339BE62D-B4B8-4956-B58D-73C4685FC492/MicrosoftDeploymentToolkit_x64.msi"
+
     Destination = "$PSScriptRoot\MicrosoftDeploymentToolkit_x64.msi"
 }
 Start-BitsTransfer @params
@@ -37,6 +38,7 @@ Write-Output "Downloading ADK 1809"
 $params = @{
     Source      = "http://download.microsoft.com/download"+
     "/0/1/C/01CC78AA-B53B-4884-B7EA-74F2878AA79F/adk/adksetup.exe"
+
     Destination = "$PSScriptRoot\adksetup.exe"
 }
 Start-BitsTransfer @params
@@ -45,39 +47,58 @@ Write-Output "Downloading ADK 1809 WinPE Addon"
 $params = @{
     Source      = "http://download.microsoft.com/download"+
     "/D/7/E/D7E22261-D0B3-4ED6-8151-5E002C7F823D/adkwinpeaddons/adkwinpesetup.exe"
+
     Destination = "$PSScriptRoot\adkwinpesetup.exe"
 }
 Start-BitsTransfer @params
 
-#Run Installs
-Write-Output "Installing MDT"
-Start-Process msiexec.exe -Wait -ArgumentList "/i ""$PSScriptRoot\MicrosoftDeploymentToolkit_x64.msi"" /qn"
-
-Write-Output "Installing ADK"
+Write-Output "Installing MDT 8456"
 $params = @{
+    Wait         = $True
+    FilePath     = "msiexec"
+    ArgumentList = "/i ""$PSScriptRoot\MicrosoftDeploymentToolkit_x64.msi"" /qn"
+}
+Start-Process @params
+
+Write-Output "Installing ADK 1809"
+$params = @{
+    Wait         = $True
     FilePath     = "$PSScriptRoot\adksetup.exe"
     ArgumentList = "/quiet /features OptionId.DeploymentTools"
 }
-Start-Process @params -Wait
+Start-Process @params
 
 Write-Output "Installing ADK 1809 WinPE Addon"
 $params = @{
+    Wait         = $True
     FilePath     = "$PSScriptRoot\adkwinpesetup.exe"
     ArgumentList = "/quiet /features OptionId.WindowsPreinstallationEnvironment"
 }
-Start-Process @params -Wait
+Start-Process @params
 
-#Import MDT Module
 Write-Output "Importing MDT Module"
-Import-Module "$env:SystemDrive\Program Files\Microsoft Deployment Toolkit\bin\MicrosoftDeploymentToolkit.psd1"
+$ModulePath = "$env:ProgramFiles\Microsoft Deployment Toolkit"+
+              "\bin\MicrosoftDeploymentToolkit.psd1"
+Import-Module $ModulePath
 
-#Create Deployment Share
-Write-Output "Create Deployment Share"
-$localUser = "svc_mdt"
-$localUserPasswordSecure = ConvertTo-SecureString $ServiceAccountPassword -AsPlainText -Force
-New-LocalUser -AccountNeverExpires -Name "svc_mdt" -Password $localUserPasswordSecure -PasswordNeverExpires
-New-Item -Path "$DeploymentShareDrive\DeploymentShare" -ItemType directory
-New-SmbShare -Name "DeploymentShare$" -Path "$DeploymentShareDrive\DeploymentShare" -ReadAccess "$env:COMPUTERNAME\svc_mdt"
+Write-Output "Creating local Service Account for DeploymentShare"
+$params = @{
+    Name                 = "svc_mdt"      
+    Password             = (ConvertTo-SecureString $SvcAccountPassword -AsPlainText -Force)
+    AccountNeverExpires  = $true
+    PasswordNeverExpires = $true
+}
+New-LocalUser @params
+
+Write-Output "Creating Deployment Share Directory"
+New-Item -Path "$DeploymentShareDrive\DeploymentShare" -ItemType Directory
+
+$params = @{
+    Name       = "DeploymentShare$"
+    Path       = "$DeploymentShareDrive\DeploymentShare"
+    ReadAccess = "$env:COMPUTERNAME\svc_mdt"
+}
+New-SmbShare @params
 
 $params = @{
     Name        = "DS001"
@@ -88,17 +109,15 @@ $params = @{
 }
 New-PSDrive @params -Verbose | Add-MDTPersistentDrive -Verbose
 
-#Import WIM
-Write-Output "Checking for wim files"
-$Wims = Get-ChildItem $PSScriptRoot -Filter "*.wim" | Select-Object -ExpandProperty FullName
+Write-Output "Checking for wim files to import"
+$Wims = Get-ChildItem $PSScriptRoot -Filter "*.wim" | Select -ExpandProperty FullName
 if (!$Wims) {
     Write-Output "No wim files found"
 }
 
 if ($Wims) {
     foreach($Wim in $Wims){
-    $WimName = Split-Path $Wim -Leaf
-    $WimName = $WimName.TrimEnd(".wim")
+    $WimName = (Split-Path $Wim -Leaf).TrimEnd(".wim")
     Write-Output "$WimName found - will import"
     $params = @{
         Path              = "DS001:\Operating Systems"
@@ -148,12 +167,17 @@ DeployRoot=\\$env:COMPUTERNAME\DeploymentShare$
 SkipBDDWelcome=YES
 UserDomain=$env:COMPUTERNAME
 UserID=svc_mdt
-UserPassword=$ServiceAccountPassword
+UserPassword=$SvcAccountPassword
 "@
 
-Set-Content -Path "$DeploymentShareDrive\DeploymentShare\Control\Bootstrap.ini" -Value $BootstrapIni -Force -Confirm:$False
+$params = @{
+    Path  = "$DeploymentShareDrive\DeploymentShare\Control\Bootstrap.ini"
+    Value = $BootstrapIni
+    Force = $True
+}
+Set-Content @params -Confirm:$False
 
-#Disable x86 Support
+Write-Output "Disabling x86 Support"
 $DeploymentShareSettings = "$DeploymentShareDrive\DeploymentShare\Control\Settings.xml"
 $xmlDoc = [XML](Get-Content $DeploymentShareSettings)
 $xmldoc.Settings.SupportX86 = "False"
@@ -213,75 +237,7 @@ if ($IncludeApplications) {
 }
 
 if ($IncludeApplications) {
-    $AppList = @"
-[
-    {
-        "name": "Google Chrome Enterprise",
-        "version": "70.0.3538.11000",
-        "download": "https://dl.google.com/tag/s/dl/chrome/install/googlechromestandaloneenterprise64.msi",
-        "filename": "googlechromestandaloneenterprise64.msi",
-        "install": "msiexec /i googlechromestandaloneenterprise64.msi /qb"
-    },
-    {
-        "name": "Mozilla Firefox",
-        "version": "63.0.3",
-        "download": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/63.0.3/win64/en-GB/Firefox%20Setup%2063.0.3.exe",
-        "filename": "firefox.exe",
-        "install": "firefox.exe /S"
-    },
-    {
-        "name": "7-Zip",
-        "version": "18.05",
-        "download": "https://www.7-zip.org/a/7z1805-x64.msi",
-        "filename": "7z1805-x64.msi",
-        "install": "msiexec /i 7z1805-x64.msi /qb"
-    },
-    {
-        "name": "Visual Studio Code",
-        "version": "1.29.1",
-        "download": "https://az764295.vo.msecnd.net/stable/bc24f98b5f70467bc689abf41cc5550ca637088e/VSCodeUserSetup-x64-1.29.1.exe",
-        "filename": "VSCodeUserSetup-x64-1.29.1.exe",
-        "install": "VSCodeUserSetup-x64-1.29.1.exe /VERYSILENT"
-    },
-    {
-        "name": "Node.js",
-        "version": "10.13.0",
-        "download": "https://nodejs.org/dist/v10.13.0/node-v10.13.0-x64.msi",
-        "filename": "node-v10.13.0-x64.msi",
-        "install": "msiexec /i node-v10.13.0-x64.msi /qb"
-    },
-    {
-        "name": "MongoDB",
-        "version": "4.0.3",
-        "download": "https://fastdl.mongodb.org/win32/mongodb-win32-x86_64-2008plus-ssl-4.0.3-signed.msi",
-        "filename": "mongodb-win32-x86_64-2008plus-ssl-4.0.3-signed.msi",
-        "install": "msiexec /i mongodb-win32-x86_64-2008plus-ssl-4.0.3-signed.msi /qb"
-    },
-    {
-        "name": "VLC media player",
-        "version": "3.0.4",
-        "download": "http://videolan.mirrors.nublue.co.uk/vlc/3.0.4/win64/vlc-3.0.4-win64.exe",
-        "filename": "vlc-3.0.4-win64.exe",
-        "install": "vlc-3.0.4-win64.exe /L=1033 /S"
-    },
-    {
-        "name": "Treesize Free",
-        "version": "4.22",
-        "download": "https://www.jam-software.de/treesize_free/TreeSizeFreeSetup.exe",
-        "filename": "TreeSizeFreeSetup.exe",
-        "install": "TreeSizeFreeSetup.exe /VERYSILENT /NORESTART"
-    },
-    {
-        "name": "Putty",
-        "version": "0.70",
-        "download": "https://the.earth.li/~sgtatham/putty/latest/w64/putty-64bit-0.70-installer.msi",
-        "filename": "putty-64bit-0.70-installer.msi",
-        "install": "msiexec /i putty-64bit-0.70-installer.msi /qb"
-    }
-]
-"@
-    $AppList = ConvertFrom-Json $AppList
-
+    $Applist = gc "$PSScriptRoot\applications.json" | ConvertFrom-Json
     foreach ($Application in $AppList) {
         New-Item -Path "$PSScriptRoot\mdt_apps\$($application.name)" -ItemType Directory -Force
         Start-BitsTransfer -Source $Application.download -Destination "$PSScriptRoot\mdt_apps\$($application.name)\$($Application.filename)"
