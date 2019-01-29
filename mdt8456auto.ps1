@@ -13,7 +13,7 @@ param (
 
     [Parameter(Mandatory = $true)]
     [ValidateScript( {Test-Path $_})]
-    [string]$DeploymentShareDrive,
+    [string]$DSDrive,
 
     [Parameter(Mandatory = $false)]
     [switch] $IncludeApplications,
@@ -23,7 +23,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
-$DeploymentShareDrive = $DeploymentShareDrive.TrimEnd("\")
+$DSDrive = $DSDrive.TrimEnd("\")
 
 write "Downloading MDT 8456"
 $params = @{
@@ -91,11 +91,11 @@ $params = @{
 New-LocalUser @params
 
 write "Creating Deployment Share Directory"
-New-Item -Path "$DeploymentShareDrive\DeploymentShare" -ItemType Directory
+New-Item -Path "$DSDrive\DeploymentShare" -ItemType Directory
 
 $params = @{
     Name       = "DeploymentShare$"
-    Path       = "$DeploymentShareDrive\DeploymentShare"
+    Path       = "$DSDrive\DeploymentShare"
     ReadAccess = "$env:COMPUTERNAME\svc_mdt"
 }
 New-SmbShare @params
@@ -103,7 +103,7 @@ New-SmbShare @params
 $params = @{
     Name        = "DS001"
     PSProvider  = "MDTProvider"
-    Root        = "$DeploymentShareDrive\DeploymentShare"
+    Root        = "$DSDrive\DeploymentShare"
     Description = "MDT Deployment Share"
     NetworkPath = "\\$env:COMPUTERNAME\DeploymentShare$"
 }
@@ -171,14 +171,14 @@ UserPassword=$SvcAccountPassword
 "@
 
 $params = @{
-    Path  = "$DeploymentShareDrive\DeploymentShare\Control\Bootstrap.ini"
+    Path  = "$DSDrive\DeploymentShare\Control\Bootstrap.ini"
     Value = $BootstrapIni
     Force = $True
 }
-Set-Content @params -Confirm:$False
+sc @params -Confirm:$False
 
 write "Disabling x86 Support"
-$DeploymentShareSettings = "$DeploymentShareDrive\DeploymentShare\Control\Settings.xml"
+$DeploymentShareSettings = "$DSDrive\DeploymentShare\Control\Settings.xml"
 $xmlDoc = [XML](Get-Content $DeploymentShareSettings)
 $xmldoc.Settings.SupportX86 = "False"
 $xmlDoc.Save($DeploymentShareSettings)
@@ -216,7 +216,7 @@ if ($IncludeApplications) {
   </Add>
 </Configuration>
 "@
-    Set-Content -Path "$PSScriptRoot\odt\configuration.xml" -Value $xml -Force -Confirm:$false
+    sc -Path "$PSScriptRoot\odt\configuration.xml" -Value $xml -Force -Confirm:$false
 
     write "Importing Office 365 into MDT"
     $params = @{
@@ -240,7 +240,11 @@ if ($IncludeApplications) {
     $Applist = gc "$PSScriptRoot\applications.json" | ConvertFrom-Json
     foreach ($Application in $AppList) {
         New-Item -Path "$PSScriptRoot\mdt_apps\$($application.name)" -ItemType Directory -Force
-        Start-BitsTransfer -Source $Application.download -Destination "$PSScriptRoot\mdt_apps\$($application.name)\$($Application.filename)"
+        $params = @{
+            Source      = $Application.download
+            Destination = "$PSScriptRoot\mdt_apps\$($application.name)\$($Application.filename)"
+        }
+        Start-BitsTransfer @params
         $params = @{
             Path                  = "DS001:\Applications"
             Name                  = $Application.name
@@ -262,7 +266,7 @@ if ($IncludeApplications) {
 
 #Install WDS
 If ($InstallWDS) {
-    $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
+    $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem
     if ($OSInfo.ProductType -eq 1) {
         write "Workstation OS - WDS Not available"
     }
@@ -272,9 +276,15 @@ If ($InstallWDS) {
         if ($WDSCheck) {
             write "WDS Role Available - Installing"
             Add-WindowsFeature -Name WDS -IncludeAllSubFeature -IncludeManagementTools
-            $WDSUtilResults = wdsutil /initialize-server /remInst:"$DeploymentShareDrive\remInstall" /standalone
-            $WDSConfigResults = wdsutil /Set-Server /AnswerClients:All
-            Import-WdsBootImage -Path "$DeploymentShareDrive\DeploymentShare\Boot\LiteTouchPE_x64.wim" -NewImageName "MDT Litetouch" -SkipVerify
+            $WDSInit   = wdsutil /initialize-server /remInst:"$DSDrive\remInstall" /standalone
+            $WDSConfig = wdsutil /Set-Server /AnswerClients:All
+            $params = @{
+                Path         = "$DSDrive\DeploymentShare\Boot\LiteTouchPE_x64.wim"
+                SkipVerify   = $True
+                NewImageName = "MDT Litetouch"
+                
+            }
+            Import-WdsBootImage @params
         }
         else {
             write "WDS Role not available on this version of Server"
